@@ -31,6 +31,7 @@ jobs:
           for FORK in $FORK_LIST; do
             echo "Updating fork: $FORK"
             
+            # Клонируем форк
             FORK_URL="https://x-access-token:${{ secrets.FORK_UPDATE_PAT }}@github.com/${FORK}.git"
             git clone --quiet $FORK_URL fork_repo
             cd fork_repo
@@ -38,12 +39,24 @@ jobs:
             git config user.name "GitHub Actions"
             git config user.email "actions@github.com"
             
+            # Добавляем оригинальный репозиторий как upstream
             git remote add upstream "https://github.com/$GITHUB_REPOSITORY.git"
             git fetch upstream
             
+            # Сохраняем текущее состояние
             git checkout main || git checkout -b main
-            git reset --hard upstream/main
-            git push --force origin main
+            
+            # Альтернативный подход: делаем selective merge вместо reset --hard
+            # Исключаем папку .github/workflows
+            git merge --no-commit upstream/main
+            
+            # Если были внесены изменения в workflows, откатываем их
+            git reset .github/workflows/
+            git checkout -- .github/workflows/ || true
+            
+            # Выполняем коммит и пуш
+            git commit -m "Sync with upstream (excluding workflows)" || echo "No changes to commit"
+            git push origin main
             
             cd ..
             rm -rf fork_repo
