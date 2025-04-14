@@ -3,13 +3,13 @@ name: Auto Sync Forks
 on:
   push:
     branches:
-      - main  #  depending on the name of the main branch
+      - main  # or your primary branch
   workflow_dispatch:  # allows manual trigger
 
 jobs:
   sync_forks:
     runs-on: ubuntu-latest
-    name: Sync main branch of all forks
+    name: Force sync main branch of all forks
 
     steps:
       - name: Checkout repository
@@ -17,7 +17,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.FORK_UPDATE_PAT }}
-      
+
       - name: Get fork list
         id: get_forks
         run: |
@@ -30,46 +30,31 @@ jobs:
           
           echo "Forks to be updated:"
           echo "$FORKS"
-      
-      - name: Auto-sync all forks
+
+      - name: Hard sync all forks
         run: |
           IFS=$'\n'
           for FORK in $FORK_LIST; do
             echo "Syncing fork: $FORK"
             
-            # Clone the fork's main branch
+            # Clone fork
             FORK_URL="https://x-access-token:${{ secrets.FORK_UPDATE_PAT }}@github.com/${FORK}.git"
-            git clone --quiet --single-branch --branch main $FORK_URL fork_repo || { echo "Failed to clone main branch for $FORK, skipping"; continue; }
+            git clone --quiet --single-branch --branch main $FORK_URL fork_repo || { echo "Failed to clone $FORK"; continue; }
             cd fork_repo
-            
-            # Configure git identity
+
+            # Configure git
             git config user.name "GitHub Auto-Sync Bot"
             git config user.email "auto-sync@noreply.github.com"
-            
-            # Add upstream and fetch changes
-            git remote add upstream "https://github.com/$GITHUB_REPOSITORY.git"
+
+            # Add upstream and fetch
+            git remote add upstream https://github.com/$GITHUB_REPOSITORY.git
             git fetch upstream main
-            
-            # Check if already up to date
-            if git diff --quiet HEAD upstream/main; then
-              echo "Fork $FORK is already in sync with upstream"
-              cd ..
-              rm -rf fork_repo
-              continue
-            fi
-            
-            # Merge changes without committing immediately, exclude workflows
-            git merge --no-commit --no-ff upstream/main
-            
-            # Exclude workflows from sync
-            git reset -- .github/workflows/
-            git checkout -- .github/workflows/ 2>/dev/null || true
-            
-            # Commit and push the changes
-            git commit -m "Auto-sync with upstream repository [skip ci]" || { echo "No changes to commit for $FORK"; cd ..; rm -rf fork_repo; continue; }
-            git push origin main
-            
-            echo "Successfully synced $FORK"
+
+            # Reset and force push
+            git reset --hard upstream/main
+            git push origin main --force
+
+            echo "Successfully hard-synced $FORK"
             cd ..
             rm -rf fork_repo
           done
