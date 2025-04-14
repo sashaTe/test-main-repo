@@ -1,0 +1,50 @@
+name: Update Forks on Main Branch Changes
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  update_forks:
+    runs-on: ubuntu-latest
+    name: Update all forks
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.FORK_UPDATE_PAT }}
+      
+      - name: Update forks
+        run: |
+          REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d '/' -f 2)
+          FORK_LIST=$(curl -s -H "Authorization: token ${{ secrets.FORK_UPDATE_PAT }}" \
+            "https://api.github.com/repos/$GITHUB_REPOSITORY/forks" | \
+            jq -r '.[] | .full_name')
+          
+          echo "Updating the following forks:"
+          echo "$FORK_LIST"
+          
+          for FORK in $FORK_LIST; do
+            echo "Updating fork: $FORK"
+            
+            FORK_URL="https://x-access-token:${{ secrets.FORK_UPDATE_PAT }}@github.com/${FORK}.git"
+            git clone --quiet $FORK_URL fork_repo
+            cd fork_repo
+            
+            git config user.name "GitHub Actions"
+            git config user.email "actions@github.com"
+            
+            git remote add upstream "https://github.com/$GITHUB_REPOSITORY.git"
+            git fetch upstream
+            
+            git checkout main || git checkout -b main
+            git reset --hard upstream/main
+            git push --force origin main
+            
+            cd ..
+            rm -rf fork_repo
+          done
