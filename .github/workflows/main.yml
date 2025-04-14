@@ -1,15 +1,15 @@
-name: Update Forks on Main Branch Changes
+name: Auto Sync Forks
 
 on:
   push:
     branches:
-      - main
-  workflow_dispatch:
+      - main  #  depending on the name of the main branch
+  workflow_dispatch:  # allows manual trigger
 
 jobs:
-  update_forks:
+  sync_forks:
     runs-on: ubuntu-latest
-    name: Update all forks
+    name: Sync main branch of all forks
 
     steps:
       - name: Checkout repository
@@ -18,46 +18,58 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.FORK_UPDATE_PAT }}
       
-      - name: Update forks
+      - name: Get fork list
+        id: get_forks
         run: |
-          REPO_NAME=$(echo "$GITHUB_REPOSITORY" | cut -d '/' -f 2)
-          FORK_LIST=$(curl -s -H "Authorization: token ${{ secrets.FORK_UPDATE_PAT }}" \
+          FORKS=$(curl -s -H "Authorization: token ${{ secrets.FORK_UPDATE_PAT }}" \
             "https://api.github.com/repos/$GITHUB_REPOSITORY/forks" | \
             jq -r '.[] | .full_name')
+          echo "FORK_LIST<<EOF" >> $GITHUB_ENV
+          echo "$FORKS" >> $GITHUB_ENV
+          echo "EOF" >> $GITHUB_ENV
           
-          echo "Updating the following forks:"
-          echo "$FORK_LIST"
-          
+          echo "Forks to be updated:"
+          echo "$FORKS"
+      
+      - name: Auto-sync all forks
+        run: |
+          IFS=$'\n'
           for FORK in $FORK_LIST; do
-            echo "Updating fork: $FORK"
+            echo "Syncing fork: $FORK"
             
-            # Клонируем форк
+            # Clone the fork's main branch
             FORK_URL="https://x-access-token:${{ secrets.FORK_UPDATE_PAT }}@github.com/${FORK}.git"
-            git clone --quiet $FORK_URL fork_repo
+            git clone --quiet --single-branch --branch main $FORK_URL fork_repo || { echo "Failed to clone main branch for $FORK, skipping"; continue; }
             cd fork_repo
             
-            git config user.name "GitHub Actions"
-            git config user.email "actions@github.com"
+            # Configure git identity
+            git config user.name "GitHub Auto-Sync Bot"
+            git config user.email "auto-sync@noreply.github.com"
             
-            # Добавляем оригинальный репозиторий как upstream
+            # Add upstream and fetch changes
             git remote add upstream "https://github.com/$GITHUB_REPOSITORY.git"
-            git fetch upstream
+            git fetch upstream main
             
-            # Сохраняем текущее состояние
-            git checkout main || git checkout -b main
+            # Check if already up to date
+            if git diff --quiet HEAD upstream/main; then
+              echo "Fork $FORK is already in sync with upstream"
+              cd ..
+              rm -rf fork_repo
+              continue
+            fi
             
-            # Альтернативный подход: делаем selective merge вместо reset --hard
-            # Исключаем папку .github/workflows
-            git merge --no-commit upstream/main
+            # Merge changes without committing immediately, exclude workflows
+            git merge --no-commit --no-ff upstream/main
             
-            # Если были внесены изменения в workflows, откатываем их
-            git reset .github/workflows/
-            git checkout -- .github/workflows/ || true
+            # Exclude workflows from sync
+            git reset -- .github/workflows/
+            git checkout -- .github/workflows/ 2>/dev/null || true
             
-            # Выполняем коммит и пуш
-            git commit -m "Sync with upstream (excluding workflows)" || echo "No changes to commit"
+            # Commit and push the changes
+            git commit -m "Auto-sync with upstream repository [skip ci]" || { echo "No changes to commit for $FORK"; cd ..; rm -rf fork_repo; continue; }
             git push origin main
             
+            echo "Successfully synced $FORK"
             cd ..
             rm -rf fork_repo
           done
