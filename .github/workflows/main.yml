@@ -1,10 +1,10 @@
-name: Auto Sync Forks
+name: Auto Sync Forks (Force Clean)
 
 on:
   push:
     branches:
-      - main  # or your primary branch
-  workflow_dispatch:  # allows manual trigger
+      - main  # change if your main branch is named differently
+  workflow_dispatch:
 
 jobs:
   sync_forks:
@@ -18,7 +18,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.FORK_UPDATE_PAT }}
 
-      - name: Get fork list
+      - name: Get list of forks
         id: get_forks
         run: |
           FORKS=$(curl -s -H "Authorization: token ${{ secrets.FORK_UPDATE_PAT }}" \
@@ -27,34 +27,33 @@ jobs:
           echo "FORK_LIST<<EOF" >> $GITHUB_ENV
           echo "$FORKS" >> $GITHUB_ENV
           echo "EOF" >> $GITHUB_ENV
-          
+
           echo "Forks to be updated:"
           echo "$FORKS"
 
-      - name: Hard sync all forks
+      - name: Force sync each fork
         run: |
           IFS=$'\n'
           for FORK in $FORK_LIST; do
             echo "Syncing fork: $FORK"
-            
-            # Clone fork
+
             FORK_URL="https://x-access-token:${{ secrets.FORK_UPDATE_PAT }}@github.com/${FORK}.git"
             git clone --quiet --single-branch --branch main $FORK_URL fork_repo || { echo "Failed to clone $FORK"; continue; }
             cd fork_repo
 
-            # Configure git
-            git config user.name "GitHub Auto-Sync Bot"
-            git config user.email "auto-sync@noreply.github.com"
-
-            # Add upstream and fetch
             git remote add upstream https://github.com/$GITHUB_REPOSITORY.git
             git fetch upstream main
 
-            # Reset and force push
             git reset --hard upstream/main
+
+            # Optional: remove workflows if needed
+            rm -rf .github/workflows/
+
+            git add -A
+            git commit -m "Clean sync with upstream (without workflows)" || echo "Nothing to commit"
             git push origin main --force
 
-            echo "Successfully hard-synced $FORK"
+            echo "Fork $FORK synced successfully"
             cd ..
             rm -rf fork_repo
           done
